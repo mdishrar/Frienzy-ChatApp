@@ -152,7 +152,7 @@ app.use('/api/messages', messageRoutes)
 
 await connectDB();
 
-if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV == "production") {
     const PORT = process.env.PORT;
     server.listen(PORT, () => {
         console.log(`listening at http://localhost:${PORT}`);
