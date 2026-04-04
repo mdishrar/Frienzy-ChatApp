@@ -13,7 +13,7 @@ app.use(express.json({ limit: "4mb" }));
 app.use(cors({
     methods: ["GET", "POST", "PUT"],
     credentials: true,
-    origin: process.env.CLIENT_URL,
+    origin: process.env.CLIENT_URL.split(","),
 }))
 
 const server = http.createServer(app)
@@ -22,7 +22,7 @@ export const io = new Server(server, {
     cors: {
         methods: ["GET", "POST", "PUT"],
         credentials: true,
-        origin: process.env.CLIENT_URL,
+        origin: process.env.CLIENT_URL.split(","),
     }
 })
 
