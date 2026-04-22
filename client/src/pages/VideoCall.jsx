@@ -37,7 +37,7 @@ const VideoCall = () => {
 
     // ─── Shared: Setup media stream + PeerConnection ──────────────────────────
     const setupMediaAndPC = async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: {noiseSuppression:true,echoCancellation:true,autoGainControl:true}, video: true })
         localStreamRef.current = stream
 
         if (localVideoRef.current) {
