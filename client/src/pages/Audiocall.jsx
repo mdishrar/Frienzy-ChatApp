@@ -48,7 +48,7 @@ const AudioCall = () => {
     }
 
     const setupMediaAndPC = async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: {noiseSuppression:true,echoCancellation:true,autoGainControl:true}, video: false })
         localStreamRef.current = stream
 
         const pc = new RTCPeerConnection(ICE_SERVERS)
