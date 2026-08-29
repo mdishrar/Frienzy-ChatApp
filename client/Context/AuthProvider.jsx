@@ -94,7 +94,20 @@ export const AuthProvider = ({children}) => {
             (response) => response,
             async (error) => {
                 const originalRequest = error.config;
-                if (error.response?.status === 401 && !originalRequest?._retry) {
+
+                // FIX: without this guard, a 401 from the refresh endpoint
+                // itself (e.g. no valid refresh cookie present — which is
+                // exactly what happens if the cookie's secure/sameSite
+                // attributes don't match the current environment) gets
+                // treated like any other expired-access-token 401. The
+                // interceptor would then call refreshAccessToken() again,
+                // which hits /refresh again, which 401s again — forever,
+                // with no backoff. This check breaks that cycle: a failed
+                // refresh call is allowed to fail outright instead of
+                // triggering another refresh attempt.
+                const isRefreshCall = originalRequest?.url?.includes('/api/auth/refresh');
+
+                if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshCall) {
                     originalRequest._retry = true;
                     try {
                         const newToken = await refreshAccessToken();
@@ -141,13 +154,19 @@ export const AuthProvider = ({children}) => {
     
     const logout = async () =>{
         try{
-            console.log(authUser._id)
-            const {data} = await axios.post('/api/auth/logout',{authUserId : authUser})
-            if (data.success && socket) {
-                socket.disconnect();
+            const {data} = await axios.post('/api/auth/logout')
+            if (data.success) {
+                // FIX: socket can be null (e.g. it was never connected, or
+                // was already cleared) — calling .disconnect() on null
+                // threw here, which was caught below and showed a generic
+                // "logout failed" toast even though the server-side logout
+                // (Redis token delete + cookie clear) had already
+                // succeeded. Optional chaining makes this a no-op instead
+                // of a crash when there's no socket to disconnect.
+                socket?.disconnect();
                 clearAuthState();
+                toast.success('Logged out successfully')
             }
-            toast.success('Logged out successfully')
         }catch(error){
             toast.error(error.message)
             console.log(error)
@@ -207,4 +226,3 @@ export const AuthProvider = ({children}) => {
     </AuthContext.Provider>
   )
 }
-

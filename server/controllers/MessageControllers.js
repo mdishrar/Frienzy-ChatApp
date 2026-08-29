@@ -1,7 +1,7 @@
 import Message from "../Models/messageModel.js";
 import User from "../Models/userModel.js";
 import cloudinary from "../lib/cloudinary.js"; 
-import { io,getSocketId } from "../server.js";
+import { io } from "../server.js";
 import {randomUUID} from "crypto"
 import Group from "../Models/GroupModel.js"
 import { redis } from "../server.js";
@@ -143,31 +143,23 @@ export const CallingRoomId = async (req,res) =>{
         const myId = req.user._id;
         const roomid = randomUUID();
 
-        const CallerSocketId =  await getSocketId(myId);
+        io.in(`user:${myId}`).socketsJoin(roomid);
+        console.log(`Caller ${myId}'s sockets joined room ${roomid} for ${callType}`);
 
-        if(CallerSocketId){
-            const CallerSocket = io.sockets.sockets.get(CallerSocketId);
-            if(CallerSocket) {
-                CallerSocket.join(roomid);
-                console.log(`Caller ${CallerSocketId} and ${myId} is joined the room ${roomid} for ${callType}`)
-            }
-        }
+        const caller = await User.findById(myId);
 
-        const caller =  await User.findById(myId)
-
-        const receiverSocketId = await getSocketId(selectedUserId);
-        if (receiverSocketId) {
-            io.to(receiverSocketId).emit("incomingCall", {
+        // Notify every open tab the receiver has — whichever one they're
+        // actually looking at will show the incoming call UI.
+        io.to(`user:${selectedUserId}`).emit("incomingCall", {
             callType,
-            roomid,        
+            roomid,
             callerInfo : {
                 callerId :   caller._id,
                 fullName : caller.fullName,
                 profilePic : caller.profilePic,
              },
             incomingCalltime : 30000,
-            });
-        }
+        });
 
         res.json({ success: true,roomid})
    }catch(error){
@@ -286,10 +278,9 @@ export const sendMessage = async (req,res)=>{
             audio : audioURL,
             
         })
-        const recieverSocketId = await getSocketId(receiverId)
-        if(recieverSocketId){
-            io.to(recieverSocketId).emit('newMessage',newMessage)
-        }
+
+        io.to(`user:${receiverId}`).emit('newMessage', newMessage);
+
         res.json({success:true,newMessage});
     }catch(error){
         console.log(error.message);
@@ -342,14 +333,9 @@ export const toGroupedChatting = async (req,res) =>{
         });
 
         const room = newGroup._id.toString();
-        
-        let joinedCount = 0;
+
         for (const userId of memberIds) {
-        const socketId = await getSocketId(userId.toString());
-            if (socketId) {
-                io.in(socketId).socketsJoin(room);
-                joinedCount++;
-            }
+            io.in(`user:${userId.toString()}`).socketsJoin(room);
         }
 
         return res.status(200).json({
@@ -409,7 +395,7 @@ export const sendGroupMessage = async (req, res) => {
       text,
       image: imageURL,
       audio: audioURL,
-      seenBy: [senderId], // sender has "seen" their own message
+      seenBy: [senderId], 
     });
     io.to(groupId.toString()).emit('newGroupMessage', newMessage);
 

@@ -8,14 +8,21 @@ import jwt from "jsonwebtoken";
 
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const refreshKey = (userId) => `refresh:${userId}`; 
+const refreshKey = (userId) => `refresh:${userId}`;
+const userCacheKey = (userId) => `user:${userId}`;
+const emailCacheKey = (email) => `email:${email}`;
+const isProduction = process.env.NODE_ENV === "production";
+
+const baseCookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  path: "/",
+  ...(isProduction ? { partitioned: true } : {}),
+};
 
 const cookieOptions = {
-  httpOnly: true,
-  secure: true,
-  sameSite: "none",
-  path: "/",
-  partitioned: true,
+  ...baseCookieOptions,
   maxAge: REFRESH_TTL_SECONDS * 1000,
 };
 
@@ -23,6 +30,31 @@ const sanitizeUser = (userDoc) => {
   const user = userDoc.toObject ? userDoc.toObject() : { ...userDoc };
   delete user.password;
   return user;
+};
+
+const cacheUser = async (user) => {
+  try {
+    await redis.pipeline()
+      .set(userCacheKey(user._id), JSON.stringify({
+        email: user.email,
+        fullName: user.fullName,
+        bio: user.bio,
+        password: user.password,
+        profilePic: user.profilePic,
+      }), "EX", REFRESH_TTL_SECONDS)
+      .set(emailCacheKey(user.email), user._id.toString(), "EX", REFRESH_TTL_SECONDS)
+      .exec();
+  } catch (err) {
+    console.error("[cache] failed to cache user (non-fatal):", err.message);
+  }
+};
+
+const invalidateUserCache = async (userId) => {
+  try {
+    await redis.del(userCacheKey(userId));
+  } catch (err) {
+    console.error("[cache] failed to invalidate user cache (non-fatal):", err.message);
+  }
 };
 
 export const signup = async (req, res) => {
@@ -48,11 +80,8 @@ export const signup = async (req, res) => {
       generateRefreshToken(newUser._id)
     ]);
 
-    await redis.pipeline()
-      .set(refreshKey(newUser._id), refreshToken, "EX", REFRESH_TTL_SECONDS)
-      .set(`user:${newUser._id}`, JSON.stringify({ email: newUser.email, fullName: newUser.fullName, bio: newUser.bio,password: newUser.password}), "EX", REFRESH_TTL_SECONDS)
-      .set(`email:${newUser.email}`, newUser._id.toString(), "EX", REFRESH_TTL_SECONDS)
-      .exec();
+    await redis.set(refreshKey(newUser._id), refreshToken, "EX", REFRESH_TTL_SECONDS);
+    await cacheUser(newUser);
 
     res.cookie("refreshToken", refreshToken, cookieOptions);
 
@@ -77,13 +106,13 @@ export const login = async (req, res) => {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
-    
-    const cachedUserId = await redis.get(`email:${normalizedEmail}`);
-  
+
+    const cachedUserId = await redis.get(emailCacheKey(normalizedEmail));
+
     let userData = null;
 
     if (cachedUserId) {
-      const cachedUser = await redis.get(`user:${cachedUserId}`);
+      const cachedUser = await redis.get(userCacheKey(cachedUserId));
       if (cachedUser) {
         try {
           userData = JSON.parse(cachedUser);
@@ -96,23 +125,30 @@ export const login = async (req, res) => {
 
     if (!userData) {
       userData = await User.findOne({ email: normalizedEmail }).lean();
+
+      // Cache miss but user exists in Mongo — warm the cache for next time.
+      if (userData) {
+        await cacheUser(userData);
+      }
     }
-    
+
+    if (!userData) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
     const userId = userData._id?.toString?.() ?? userData._id;
     const passwordOk = await bcrypt.compare(password,userData.password);
-    
-    if (!passwordOk) {
-      return res.status(401).json({ success: false, message: "Incorrect password" });
-    }
-    
 
+    if (!passwordOk) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
     const [accessToken, refreshToken] = await Promise.all([
       generateAccessToken(userId),
       generateRefreshToken(userId)
     ]);
 
     await redis.set(refreshKey(userId), refreshToken, "EX", REFRESH_TTL_SECONDS);
-  
+
     res.cookie("refreshToken", refreshToken, cookieOptions);
 
     return res.status(200).json({
@@ -150,7 +186,7 @@ export const refreshTokenExchange = async (req, res) => {
 
     if (storedToken !== oldToken) {
       await redis.del(refreshKey(payload.userId));
-      res.clearCookie("refreshToken");
+      res.clearCookie("refreshToken", baseCookieOptions);
       return res.status(403).json({ success: false, message: "Session revoked, please log in again" });
     }
 
@@ -185,6 +221,8 @@ export const updateProfile = async (req, res) => {
       );
     }
 
+    await invalidateUserCache(userId);
+
     return res.json({ success: true, user: sanitizeUser(updatedUser) });
   } catch (error) {
     console.log("backend updateProfile Error", error);
@@ -194,9 +232,9 @@ export const updateProfile = async (req, res) => {
 
 export const logout = async (req,res) =>{
   try{
-    const userId = req.body.authUserId._id;
+    const userId = req.user._id;
     await redis.del(refreshKey(userId))
-    await res.clearCookie("refreshToken", {httpOnly: true,secure: process.env.NODE_ENV === "production",sameSite: "lax",path: "/",});
+    res.clearCookie("refreshToken", baseCookieOptions);
     return res.status(200).json({success : true})
   }catch(error){
     console.log(error);
