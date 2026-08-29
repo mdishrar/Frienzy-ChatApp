@@ -327,9 +327,9 @@ await clearStalePresenceOnBoot();
 
 setInterval(reconcilePresence, 30000);
 
-if (process.env.NODE_ENV != "production") {
+if (process.env.NODE_ENV == "production") {
     const PORT = process.env.PORT;
-    server.listen(PORT, () => {
+    server.listen(PORT,"0.0.0.0",() => {
         console.log(`listening at http://127.0.0.1:${PORT}`);
     })
 }
