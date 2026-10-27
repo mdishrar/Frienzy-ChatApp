@@ -12,7 +12,7 @@ const refreshKey = (userId) => `refresh:${userId}`;
 const userCacheKey = (userId) => `user:${userId}`;
 const emailCacheKey = (email) => `email:${email}`;
 const isProduction = process.env.NODE_ENV === "production";
-
+console.log(isProduction);
 const baseCookieOptions = {
   httpOnly: true,
   secure: isProduction,
