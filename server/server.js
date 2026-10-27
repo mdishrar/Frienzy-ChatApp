@@ -333,5 +333,5 @@ if (process.env.NODE_ENV == "development") {
         console.log(`listening at http://127.0.0.1:${PORT}`);
     })
 }
-
+console.log(PORT)
 export default server;
